@@ -6,6 +6,7 @@ package libkbfs
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -70,6 +71,7 @@ func newDiskBlockCacheStandardForTest(config *testDiskBlockCacheConfig,
 				freeBytes := maxBytes - int64(cache.currBytes)
 				return freeBytes, maxFiles, nil
 			},
+			quotaFn: func() (int64, int64) { return 0, math.MaxInt64 },
 		}
 		limiter, err = newBackpressureDiskLimiter(
 			config.MakeLogger(""), params)
