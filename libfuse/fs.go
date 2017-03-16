@@ -212,7 +212,8 @@ func (f *FS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.Sta
 		Namelen: ^uint32(0),
 		Frsize:  fuseBlockSize,
 	}
-	usageBytes, limitBytes, err := f.quotaUsage.Get(ctx, quotaUsageStaleTolerance)
+	_, usageBytes, limitBytes, err := f.quotaUsage.Get(
+		ctx, quotaUsageStaleTolerance)
 	if err != nil {
 		f.log.CDebugf(ctx, "Getting quota usage error: %v", err)
 		return err
