@@ -163,6 +163,7 @@ type JournalServer struct {
 	onBranchChange          branchChangeListener
 	onMDFlush               mdFlushListener
 
+	quotaUsage  *EventuallyConsistentQuotaUsage
 	diskLimiter diskLimiter
 
 	// Protects all fields below.
@@ -195,7 +196,10 @@ func makeJournalServer(
 		onBranchChange:          onBranchChange,
 		onMDFlush:               onMDFlush,
 		tlfJournals:             make(map[tlf.ID]*tlfJournal),
-		diskLimiter:             diskLimiter,
+		// TODO: Ideally, we'd have a shared quotaUsage
+		// instance.
+		quotaUsage:  NewEventuallyConsistentQuotaUsage(config, "JS"),
+		diskLimiter: diskLimiter,
 	}
 	jServer.dirtyOpsDone = sync.NewCond(&jServer.lock)
 	return &jServer
@@ -459,7 +463,8 @@ func (j *JournalServer) enableLocked(
 	tlfJournal, err := makeTLFJournal(
 		ctx, j.currentUID, j.currentVerifyingKey, tlfDir,
 		tlfID, tlfJournalConfigAdapter{j.config}, j.delegateBlockServer,
-		bws, nil, j.onBranchChange, j.onMDFlush, j.diskLimiter)
+		bws, nil, j.onBranchChange, j.onMDFlush,
+		j.quotaUsage, j.diskLimiter)
 	if err != nil {
 		return err
 	}

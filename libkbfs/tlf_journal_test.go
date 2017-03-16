@@ -199,6 +199,23 @@ func (c testTLFJournalConfig) checkRange(rmdses []rmdsWithExtra,
 	}
 }
 
+type testECQUConfig struct {
+	blockServer BlockServer
+	log         logger.Logger
+}
+
+func (c testECQUConfig) Clock() Clock {
+	return wallClock{}
+}
+
+func (c testECQUConfig) BlockServer() BlockServer {
+	return c.blockServer
+}
+
+func (c testECQUConfig) MakeLogger(module string) logger.Logger {
+	return c.log
+}
+
 func setupTLFJournalTest(
 	t *testing.T, ver MetadataVer, bwStatus TLFJournalBackgroundWorkStatus) (
 	tempdir string, config *testTLFJournalConfig, ctx context.Context,
@@ -264,11 +281,13 @@ func setupTLFJournalTest(
 
 	delegateBlockServer := NewBlockServerMemory(log)
 
+	ecquConfig := testECQUConfig{delegateBlockServer, log}
+	quotaUsage := NewEventuallyConsistentQuotaUsage(ecquConfig, "TLFJ")
 	diskLimitSemaphore := newSemaphoreDiskLimiter(
 		math.MaxInt64, math.MaxInt64)
 	tlfJournal, err = makeTLFJournal(ctx, uid, verifyingKey,
 		tempdir, config.tlfID, config, delegateBlockServer,
-		bwStatus, delegate, nil, nil, diskLimitSemaphore)
+		bwStatus, delegate, nil, nil, quotaUsage, diskLimitSemaphore)
 	require.NoError(t, err)
 
 	switch bwStatus {
