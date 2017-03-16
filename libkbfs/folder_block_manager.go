@@ -1060,7 +1060,7 @@ func (fbm *folderBlockManager) doReclamation(timer *time.Timer) (err error) {
 			fbm.lastQROldEnoughRev = mostRecentOldEnoughRev
 			fbm.wasLastQRComplete = complete
 		}
-		if reclamationTime != (time.Time{}) {
+		if !reclamationTime.IsZero() {
 			fbm.lastReclamationTime = reclamationTime
 		}
 	}()
