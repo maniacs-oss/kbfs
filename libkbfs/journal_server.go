@@ -652,9 +652,17 @@ func (j *JournalServer) mdOps() journalMDOps {
 	return journalMDOps{j.delegateMDOps, j}
 }
 
+// maybeReturnOverQuotaError returns an over quota error if we would
+// be over quota taking into account unflushed bytes, and enough time
+// has passed since we last returned a quota error.
 func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
+	// Always get a cached quota value, but kick off a background
+	// task to retrieve an updated quota if the cached value is
+	// more than 5s out of date.
+	const quotaUsageBackgroundTolerance = 5 * time.Second
 	timestamp, usageBytes, limitBytes, err :=
-		j.quotaUsage.Get(ctx, 5*time.Second, math.MaxInt64)
+		j.quotaUsage.Get(ctx, quotaUsageBackgroundTolerance,
+			math.MaxInt64)
 	if err != nil {
 		// This shouldn't happen, since we're only retrieving
 		// a cached value. But if it does, just pretend we
@@ -698,11 +706,11 @@ func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
 	defer j.lastQuotaErrorLock.Unlock()
 
 	now := time.Now()
-	if now.Sub(j.lastQuotaError) < time.Minute {
-		// Return OverQuota errors only occasionally, so we
-		// don't spam the keybase daemon with
-		// notifications. (See PutBlockCheckQuota in
-		// block_util.go.)
+	// Return OverQuota errors only occasionally, so we don't spam
+	// the keybase daemon with notifications. (See
+	// PutBlockCheckQuota in block_util.go.)
+	const overQuotaDuration = time.Minute
+	if now.Sub(j.lastQuotaError) < overQuotaDuration {
 		return nil
 	}
 
