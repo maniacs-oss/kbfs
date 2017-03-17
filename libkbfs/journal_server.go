@@ -647,38 +647,46 @@ func (j *JournalServer) mdOps() journalMDOps {
 	return journalMDOps{j.delegateMDOps, j}
 }
 
-func (j *JournalServer) estimateQuotaUsage(ctx context.Context) (
-	usageBytes, limitBytes int64) {
+func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
 	timestamp, usageBytes, limitBytes, err :=
 		j.quotaUsage.Get(ctx, 5*time.Second, math.MaxInt64)
 	if err != nil {
 		// This shouldn't happen, since we're only retrieving
-		// a cached value.
+		// a cached value. But if it does, just pretend we
+		// have unlimited quota.
 		j.log.CWarningf(ctx,
 			"Error encountered when getting quota usage: %+v", err)
-		return 0, math.MaxInt64
+		return nil
 	} else if timestamp.IsZero() {
 		// If we haven't retrieved a cached value yet, pretend
 		// we have unlimited quota until we get a cached
 		// value.
-		return 0, math.MaxInt64
+		return nil
 	}
 
-	j.lock.RLock()
-	defer j.lock.RUnlock()
-	var totalUnflushedBytes int64
-	for _, tlfJournal := range j.tlfJournals {
-		_, _, unflushedBytes, err := tlfJournal.getByteCounts()
-		if err != nil {
-			// This should only happen when shutting down.
-			j.log.CWarningf(ctx,
-				"Couldn't calculate unflushed bytes for %s: %+v",
-				tlfJournal.tlfID, err)
+	totalUnflushedBytes := func() int64 {
+		j.lock.RLock()
+		defer j.lock.RUnlock()
+		var totalUnflushedBytes int64
+		for _, tlfJournal := range j.tlfJournals {
+			_, _, unflushedBytes, err := tlfJournal.getByteCounts()
+			if err != nil {
+				// This should only happen when shutting down.
+				j.log.CWarningf(ctx,
+					"Couldn't calculate unflushed bytes for %s: %+v",
+					tlfJournal.tlfID, err)
+			}
+			totalUnflushedBytes += unflushedBytes
 		}
-		totalUnflushedBytes += unflushedBytes
-	}
+		return totalUnflushedBytes
+	}()
 
-	return usageBytes + totalUnflushedBytes, limitBytes
+	usageBytes += totalUnflushedBytes
+
+	_ = usageBytes
+	_ = limitBytes
+
+	return nil
 }
 
 // Status returns a JournalServerStatus object suitable for
