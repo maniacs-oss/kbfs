@@ -652,10 +652,9 @@ func (j *JournalServer) mdOps() journalMDOps {
 	return journalMDOps{j.delegateMDOps, j}
 }
 
-// maybeReturnOverQuotaError returns an over quota error if we would
-// be over quota taking into account unflushed bytes, and enough time
-// has passed since we last returned a quota error.
-func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
+// estimateQuotaUsage returns quota information, including local usage.
+func (j *JournalServer) estimateQuotaUsage(ctx context.Context) (
+	localUsageBytes, remoteUsageBytes, limitBytes int64) {
 	// Always get a cached quota value, but kick off a background
 	// task to retrieve an updated quota if the cached value is
 	// more than 5s out of date.
@@ -669,36 +668,41 @@ func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
 		// have unlimited quota.
 		j.log.CWarningf(ctx,
 			"Error encountered when getting quota usage: %+v", err)
-		return nil
+		return 0, 0, math.MaxInt64
 	} else if timestamp.IsZero() {
 		// If we haven't retrieved a cached value yet, pretend
 		// we have unlimited quota until we get a cached
 		// value.
-		return nil
+		return 0, 0, math.MaxInt64
 	}
 
-	totalUnflushedBytes := func() int64 {
-		j.lock.RLock()
-		defer j.lock.RUnlock()
-		var totalUnflushedBytes int64
-		for _, tlfJournal := range j.tlfJournals {
-			_, _, unflushedBytes, err := tlfJournal.getByteCounts()
-			if err != nil {
-				// This should only happen when shutting down.
-				j.log.CWarningf(ctx,
-					"Couldn't calculate unflushed bytes for %s: %+v",
-					tlfJournal.tlfID, err)
-			}
-			totalUnflushedBytes += unflushedBytes
+	j.lock.RLock()
+	defer j.lock.RUnlock()
+	var totalUnflushedBytes int64
+	for _, tlfJournal := range j.tlfJournals {
+		_, _, unflushedBytes, err := tlfJournal.getByteCounts()
+		if err != nil {
+			// This should only happen when shutting down.
+			j.log.CWarningf(ctx,
+				"Couldn't calculate unflushed bytes for %s: %+v",
+				tlfJournal.tlfID, err)
 		}
-		return totalUnflushedBytes
-	}()
+		totalUnflushedBytes += unflushedBytes
+	}
 
-	usageBytes += totalUnflushedBytes
+	return totalUnflushedBytes, usageBytes, limitBytes
+}
 
+// maybeReturnOverQuotaError returns an over quota error if we would
+// be over quota taking into account unflushed bytes, and enough time
+// has passed since we last returned a quota error.
+func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
+	localUsageBytes, remoteUsageBytes, limitBytes :=
+		j.estimateQuotaUsage(ctx)
+	usageBytes := localUsageBytes + remoteUsageBytes
 	if usageBytes <= limitBytes {
-		// We're under quota, even with the unflushed bytes,
-		// so nothing to do.
+		// We're under quota, even with local bytes, so
+		// nothing to do.
 		return nil
 	}
 
@@ -716,8 +720,8 @@ func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
 
 	j.lastQuotaError = now
 	return kbfsblock.BServerErrorOverQuota{
-		Msg: fmt.Sprintf("Over quota: unflushed bytes = %d",
-			totalUnflushedBytes),
+		Msg: fmt.Sprintf("Over quota: local usage bytes = %d",
+			localUsageBytes),
 		Usage:     usageBytes,
 		Limit:     limitBytes,
 		Throttled: false,
