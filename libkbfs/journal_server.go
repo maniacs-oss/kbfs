@@ -14,6 +14,7 @@ import (
 	"github.com/keybase/client/go/logger"
 	"github.com/keybase/client/go/protocol/keybase1"
 	"github.com/keybase/kbfs/ioutil"
+	"github.com/keybase/kbfs/kbfsblock"
 	"github.com/keybase/kbfs/kbfscrypto"
 	"github.com/keybase/kbfs/tlf"
 	"github.com/pkg/errors"
@@ -167,6 +168,10 @@ type JournalServer struct {
 
 	quotaUsage  *EventuallyConsistentQuotaUsage
 	diskLimiter diskLimiter
+
+	// Just protects lastQuotaError.
+	lastQuotaErrorLock sync.Mutex
+	lastQuotaError     time.Time
 
 	// Protects all fields below.
 	lock                sync.RWMutex
@@ -683,10 +688,32 @@ func (j *JournalServer) maybeReturnOverQuotaError(ctx context.Context) error {
 
 	usageBytes += totalUnflushedBytes
 
-	_ = usageBytes
-	_ = limitBytes
+	if usageBytes <= limitBytes {
+		// We're under quota, even with the unflushed bytes,
+		// so nothing to do.
+		return nil
+	}
 
-	return nil
+	j.lastQuotaErrorLock.Lock()
+	defer j.lastQuotaErrorLock.Unlock()
+
+	now := time.Now()
+	if now.Sub(j.lastQuotaError) < time.Minute {
+		// Return OverQuota errors only occasionally, so we
+		// don't spam the keybase daemon with
+		// notifications. (See PutBlockCheckQuota in
+		// block_util.go.)
+		return nil
+	}
+
+	j.lastQuotaError = now
+	return kbfsblock.BServerErrorOverQuota{
+		Msg: fmt.Sprintf("Over quota: unflushed bytes = %d",
+			totalUnflushedBytes),
+		Usage:     usageBytes,
+		Limit:     limitBytes,
+		Throttled: false,
+	}
 }
 
 // Status returns a JournalServerStatus object suitable for
