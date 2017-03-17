@@ -6,8 +6,10 @@ package libkbfs
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/keybase/client/go/logger"
 	"github.com/keybase/client/go/protocol/keybase1"
@@ -463,8 +465,7 @@ func (j *JournalServer) enableLocked(
 	tlfJournal, err := makeTLFJournal(
 		ctx, j.currentUID, j.currentVerifyingKey, tlfDir,
 		tlfID, tlfJournalConfigAdapter{j.config}, j.delegateBlockServer,
-		bws, nil, j.onBranchChange, j.onMDFlush,
-		j.quotaUsage, j.diskLimiter)
+		bws, nil, j.onBranchChange, j.onMDFlush, j.diskLimiter)
 	if err != nil {
 		return err
 	}
@@ -644,6 +645,40 @@ func (j *JournalServer) blockServer() journalBlockServer {
 
 func (j *JournalServer) mdOps() journalMDOps {
 	return journalMDOps{j.delegateMDOps, j}
+}
+
+func (j *JournalServer) estimateQuotaUsage(ctx context.Context) (
+	usageBytes, limitBytes int64) {
+	timestamp, usageBytes, limitBytes, err :=
+		j.quotaUsage.Get(ctx, 5*time.Second, math.MaxInt64)
+	if err != nil {
+		// This shouldn't happen, since we're only retrieving
+		// a cached value.
+		j.log.CWarningf(ctx,
+			"Error encountered when getting quota usage: %+v", err)
+		return 0, math.MaxInt64
+	} else if timestamp.IsZero() {
+		// If we haven't retrieved a cached value yet, pretend
+		// we have unlimited quota until we get a cached
+		// value.
+		return 0, math.MaxInt64
+	}
+
+	j.lock.RLock()
+	defer j.lock.RUnlock()
+	var totalUnflushedBytes int64
+	for _, tlfJournal := range j.tlfJournals {
+		_, _, unflushedBytes, err := tlfJournal.getByteCounts()
+		if err != nil {
+			// This should only happen when shutting down.
+			j.log.CWarningf(ctx,
+				"Couldn't calculate unflushed bytes for %s: %+v",
+				tlfJournal.tlfID, err)
+		}
+		totalUnflushedBytes += unflushedBytes
+	}
+
+	return usageBytes + totalUnflushedBytes, limitBytes
 }
 
 // Status returns a JournalServerStatus object suitable for

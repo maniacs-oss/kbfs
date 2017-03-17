@@ -192,7 +192,6 @@ type tlfJournal struct {
 	onMDFlush           mdFlushListener
 	forcedSquashByBytes uint64
 
-	quotaUsage *EventuallyConsistentQuotaUsage
 	// Invariant: this tlfJournal acquires exactly
 	// blockJournal.getStoredBytes() and
 	// blockJournal.getStoredFiles() until shutdown.
@@ -278,8 +277,8 @@ func makeTLFJournal(
 	dir string, tlfID tlf.ID, config tlfJournalConfig,
 	delegateBlockServer BlockServer, bws TLFJournalBackgroundWorkStatus,
 	bwDelegate tlfJournalBWDelegate, onBranchChange branchChangeListener,
-	onMDFlush mdFlushListener, quotaUsage *EventuallyConsistentQuotaUsage,
-	diskLimiter diskLimiter) (*tlfJournal, error) {
+	onMDFlush mdFlushListener, diskLimiter diskLimiter) (
+	*tlfJournal, error) {
 	if uid == keybase1.UID("") {
 		return nil, errors.New("Empty user")
 	}
